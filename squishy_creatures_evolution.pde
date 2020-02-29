@@ -20,7 +20,7 @@ final float viewWidth = windWidth / worldToScreenMult;
 final float viewHeight = windHeight / worldToScreenMult;
 
 // RNG seed
-final int seed = 123;
+final int seed = 1234;
 
 // Acceleration due to gravity
 final float gravity = 9.81;
@@ -29,7 +29,7 @@ final float gravity = 9.81;
 final float fluidDensity = 1.225;
 
 // Extension amount for springs
-final float extendAmount = 1.75;
+final float extendAmount = 1.5;
 
 // Extension threshold
 final float extendThreshold = 0.01;
@@ -38,7 +38,7 @@ final float extendThreshold = 0.01;
 final float extendTimestep = 0.15;
 
 // Creature squishiness
-final float creatureSquishiness = 750.0;
+final float creatureSquishiness = 1500.0;
 
 // Whether to save
 final boolean saveGenerations = false;
@@ -69,8 +69,8 @@ final boolean instantMuscleExpand = false;
 final float startCellSize = 0.5;
 
 // Grid width and height
-final int startGridWidth = 3;
-final int startGridHeight = 3;
+final int startGridWidth = 4;
+final int startGridHeight = 4;
 
 // Start position
 final PVector startPosition = new PVector(-(startGridWidth + 1) * startCellSize * 2.0, 0.2);
@@ -85,7 +85,7 @@ final float mutateChance = 0.01;
 final float presimTime = 0.1;
 
 // Node mass
-final float nodeMass = 0.5;
+final float nodeMass = 1;
 
 /////////////////////////////////////////////
 //                                         //
@@ -267,35 +267,38 @@ class BouncyNode
   
   // Calculates the normal contact force
   private void CalculateContactForce()
-  {
+  { 
     // Virtual extension/squishing of the node
     float extension = position.y - radius;
     
     // Spring extension constant
-    float k = 2500.0;
+    float k = 2000;
+    
+    // Setup contact force
+    PVector N = new PVector(0, 0);
     
     // Check if we're colliding with the ground
     if (extension < 0)
     {
-      // Magnitude of contact force
-      float R = k * -extension;
+      // Contact force, velocity resisting force, and spring force
+      N.y = gravity * mass;
+      N.y += k * 0.1 * -velocity.y;
+      N.y += (radius * 0.95 - position.y) * k;
       
-      // Normal contact force
-      AddForce(new PVector(0, R));
-      
-      // Get a unit vector for the velocity
-      PVector v = instAccel.mult(-1);
-      v.normalize();
-      
-      // Friction
+      // Setup friction
       // F = -uRv
       //
       // - u is friction coefficient
       // - R is magnitude of contact force
       // - v is unit vector of velocity
-      PVector friction = PVector.mult(v, frictionCoeff * R);
+      PVector v = velocity.copy();
+      v.normalize();
       
-      // Add the friction to the forces
+      PVector friction = PVector.mult(v, -frictionCoeff * abs(N.y));
+      friction.y = 0; // just x-axis friction
+      
+      // Apply friction and normal force
+      AddForce(N);
       AddForce(friction);
     }
   }
@@ -362,8 +365,11 @@ class SpringPair
   private float extendInterval;
   private boolean extended;
   
+  // Whether it is actually a muscle
+  private boolean isMuscle;
+  
   // Constructor
-  public SpringPair(BouncyNode nodeA, BouncyNode nodeB, float springConstant, float targetLength, boolean startExtended, int extendInterval)
+  public SpringPair(BouncyNode nodeA, BouncyNode nodeB, float springConstant, float targetLength, boolean startExtended, int extendInterval, boolean isMuscle)
   {
     this.nodeA = nodeA;
     this.nodeB = nodeB;
@@ -372,6 +378,7 @@ class SpringPair
     this.targetLength = startExtended ? targetLength * extendAmount : targetLength;
     this.extended = extendInterval < 0.1 ? false : startExtended;
     this.extendInterval = extendInterval;
+    this.isMuscle = isMuscle;
   }
   
   // Calculates the forces on the pair
@@ -380,28 +387,32 @@ class SpringPair
     // Increment extend timer
     extendTimer += timestep;
     
-    // Check if the extend timer exceeds the interval
-    if (extendTimer >= extendInterval * extendTimestep && extendInterval > 0)
+    // Check if this is a muscle (only muscles expand/contract)
+    if (isMuscle)
     {
-      // Reset the timer
-      extendTimer = 0;
+      // Check if the extend timer exceeds the interval
+      if (extendTimer >= extendInterval * extendTimestep && extendInterval > 0)
+      {
+        // Reset the timer
+        extendTimer = 0;
+        
+        // Check if the spring is extended or not
+        if (extended) extended = false;
+        else extended = true;
+      }
       
-      // Check if the spring is extended or not
-      if (extended) extended = false;
-      else extended = true;
-    }
-    
-    // Check what type of contraction/extension we are after
-    if (instantMuscleExpand)
-    {
-      if (extended && extendInterval > 0) targetLength = initialLength * extendAmount;
-      else targetLength = initialLength;
-    }
-    else
-    {
-      // Mix the target length
-      if (extended) targetLength = lerp(initialLength, initialLength * extendAmount, extendTimer / (extendInterval * extendTimestep));
-      else if (extendInterval > 0) targetLength = lerp(initialLength * extendAmount, initialLength, extendTimer / (extendInterval * extendTimestep));
+      // Check what type of contraction/extension we are after
+      if (instantMuscleExpand)
+      {
+        if (extended && extendInterval > 0) targetLength = initialLength * extendAmount;
+        else targetLength = initialLength;
+      }
+      else
+      {
+        // Mix the target length
+        if (extended) targetLength = lerp(initialLength, initialLength * extendAmount, extendTimer / (extendInterval * extendTimestep));
+        else if (extendInterval > 0) targetLength = lerp(initialLength * extendAmount, initialLength, extendTimer / (extendInterval * extendTimestep));
+      }
     }
     
     // Vector pointing from A to B
@@ -497,7 +508,7 @@ class SquishyCreature implements Comparable<SquishyCreature>
       for (int x = 0; x < gridWidth + 1; x++)
       {
         // Add a node at this point
-        nodes[x + y * (gridWidth + 1)] = new BouncyNode(0.05, PVector.add(position, new PVector(x * cellSize, y * cellSize)), 2.0, 4.0, true);
+        nodes[x + y * (gridWidth + 1)] = new BouncyNode(0.05, PVector.add(position, new PVector(x * cellSize, y * cellSize)), 2.0, 1.0, true);
       } 
     }
     
@@ -531,10 +542,10 @@ class SquishyCreature implements Comparable<SquishyCreature>
   }
   
   // Sets a spring pair up based on two IDs
-  private void CreatePair(int id1, int id2, float len, boolean startExtended, int extendInterval, float toughness)
+  private void CreatePair(int id1, int id2, float len, boolean startExtended, int extendInterval, float toughness, boolean isMuscle)
   {
     // Add each pair
-    pairs.add(new SpringPair(nodes[id1], nodes[id2], toughness, len, startExtended, extendInterval));
+    pairs.add(new SpringPair(nodes[id1], nodes[id2], toughness, len, startExtended, extendInterval, isMuscle));
   }
   
   // Adds a cell at a position
@@ -552,13 +563,32 @@ class SquishyCreature implements Comparable<SquishyCreature>
     int TL = x + (y + 1) * (gridWidth + 1);
     int TR = (x + 1) + (y + 1) * (gridWidth + 1);
     
-    // Link the corners with 6 springs (BL-BR, BL-TL, BR-TR, TL-TR, BL-TR, TL-BR)
-    CreatePair(BL, BR, cellSize, startExtended, extendInterval, toughness);
-    CreatePair(BL, TL, cellSize, startExtended, extendInterval, toughness);
-    CreatePair(BR, TR, cellSize, startExtended, extendInterval, toughness);
-    CreatePair(TL, TR, cellSize, startExtended, extendInterval, toughness);
-    CreatePair(BL, TR, cellDiagonalSize, startExtended, extendInterval, toughness);
-    CreatePair(TL, BR, cellDiagonalSize, startExtended, extendInterval, toughness);
+    // We are going from bottom-left to top-right when building the model
+    // For most cells, we just want the left and bottom nodes linked as passive links
+    CreatePair(BL, BR, cellSize, startExtended, extendInterval, toughness, false);
+    CreatePair(BL, TL, cellSize, startExtended, extendInterval, toughness, false);
+    
+    // Cell IDs used for checking cells to the right and top
+    int rightCellID = x + 1 + y * gridWidth;
+    int topCellID = x + (y + 1) * gridWidth;
+    
+    // However, for the right-most and top-most cells, we also want to link their respective edges
+    // We will check if we are either at the edge of the grid, or if the right or top cell is empty
+    boolean rightCheck = x == gridWidth - 1;
+    if (x < gridWidth - 1)
+      rightCheck = DNA.charAt(rightCellID) == '_';
+    
+    boolean topCheck = y == gridHeight - 1;
+    if (y < gridHeight - 1)
+      topCheck = DNA.charAt(topCellID) == '_';
+    
+    // Create the pairs mentioned above as required
+    if (rightCheck) CreatePair(BR, TR, cellSize, startExtended, extendInterval, toughness, false);
+    if (topCheck) CreatePair(TL, TR, cellSize, startExtended, extendInterval, toughness, false);
+    
+    // Create the diagonal muscle links
+    CreatePair(BL, TR, cellDiagonalSize, startExtended, extendInterval, toughness * 2, true);
+    CreatePair(TL, BR, cellDiagonalSize, startExtended, extendInterval, toughness * 2, true);
   }
   
   // Does a physics timestep
@@ -610,11 +640,22 @@ class SquishyCreature implements Comparable<SquishyCreature>
           // Get the cell type at this point
           char cellType = DNA.charAt(x + y * gridWidth);
           
-          // Set color based on cell type
+          // Stop if empty cell
           if (cellType == '_') continue;
-          if (cellType == '#') fill(150);
-          if (cellType == 'E') fill(100, 200, 100);
-          if (cellType == 'C') fill(200, 100, 100);
+          
+          // Cell color
+          int cellR = 0;
+          int cellG = 0;
+          int cellB = 0;
+          
+          // Set color based on cell type
+          if (cellType == '#') { cellR += 100; cellG += 100; cellB += 100; };
+          if (cellType == 'E') { cellR += 100; cellG += 200; cellB += 100; };// fill(100 + chargeColor, 200 + chargeColor, 100 + chargeColor); // green
+          if (cellType == 'C') { cellR += 200; cellG += 100; cellB += 100; };//fill(200 + chargeColor, 200 + chargeColor, 200 + chargeColor); // red
+          
+          // Set fill and stroke to cell color
+          fill(cellR, cellG, cellB);
+          stroke(cellR, cellG, cellB);
           
           // Begin the shape
           beginShape();
